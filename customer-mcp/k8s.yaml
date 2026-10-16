@@ -1,0 +1,73 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: customer-mcp-config
+  namespace: default
+data:
+  CUSTOMER_DB_HOST: "mysql"
+  CUSTOMER_DB_PORT: "3306"
+  CUSTOMER_DB_USER: "root"
+  CUSTOMER_DB_NAME: "customerdb"
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: customer-mcp-secret
+  namespace: default
+type: Opaque
+stringData:
+  CUSTOMER_DB_PASSWORD: "root1234"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: customer-mcp
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: customer-mcp
+  template:
+    metadata:
+      labels:
+        app: customer-mcp
+    spec:
+      containers:
+        - name: customer-mcp
+          image: yklee2002/customer-mcp:latest
+          imagePullPolicy: Always
+
+          ports:
+            - containerPort: 8000
+
+          envFrom:
+            - configMapRef:
+                name: customer-mcp-config
+            - secretRef:
+                name: customer-mcp-secret
+
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: customer-mcp
+  namespace: default
+spec:
+  type: ClusterIP
+  selector:
+    app: customer-mcp
+  ports:
+    - port: 8000
+      targetPort: 8000
+      protocol: TCP
