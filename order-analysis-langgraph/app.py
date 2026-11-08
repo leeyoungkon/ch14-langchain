@@ -65,7 +65,7 @@ MCP_URL = os.getenv('CUSTOMER_MCP_URL', 'http://customer-mcp:8000/mcp')
 MODEL = os.getenv('CHAT_MODEL', 'gemma3:12b')
 OLLAMA = os.getenv('OLLAMA_BASE_URL', 'http://ollama.default.svc.cluster.local:11434')  # For local testing; in-cluster use ollama.default.svc.cluster.locall
 MAX_ROWS = min(int(os.getenv('MAX_ROWS', '100')), 500)
-TZ = ZoneInfo('Asia/Seoul')  
+TZ = ZoneInfo('Asia/Seoul')   
 
 # Only the app administrator controls this S3 path; the LLM cannot modify it.
 if not (S3_URL.startswith('s3://') or S3_URL.startswith('file://') or S3_URL.startswith('/')):
