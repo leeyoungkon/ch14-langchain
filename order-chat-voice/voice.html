@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Order Chat · 음성</title>
+<style>
+body{font-family:system-ui,sans-serif;max-width:900px;margin:30px auto;padding:0 18px;color:#172334;background:#f5f7fb}h1{font-size:24px}#messages{height:52vh;overflow:auto;background:white;border:1px solid #ccd4df;padding:16px;white-space:pre-wrap;border-radius:12px}.msg{margin:12px 0;line-height:1.6;overflow-wrap:anywhere}.me{color:#1257a3}.bot{color:#125d44}form{margin-top:14px}textarea{box-sizing:border-box;width:100%;font:inherit;padding:12px;border-radius:8px;border:1px solid #aab8ca}.controls{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:12px 0}button,select{font:inherit;padding:10px;border:1px solid #bbc8d8;border-radius:8px;background:white}button{cursor:pointer}button:disabled{opacity:.5;cursor:default}#send{background:#1558b0;color:white}#status{min-height:1.5em;color:#354d6c}.note{font-size:13px;color:#52637a;line-height:1.6}
+</style></head><body>
+<h1>Order Chat · 음성 대화</h1><p>MinIO Parquet + DuckDB + Customer MCP</p>
+<div id="messages" role="log" aria-label="대화 내역"></div>
+<form id="f"><label for="q">질문</label><textarea id="q" rows="2" maxlength="3000" placeholder="직접 입력하거나 음성 입력을 누르세요" required></textarea>
+<div class="controls"><button type="button" id="mic">음성 입력</button><button type="submit" id="send">질문 전송</button><label><input type="checkbox" id="autoSend">인식 후 자동 전송</label></div></form>
+<div class="controls"><label><input type="checkbox" id="autoSpeak" checked>답변 자동 읽기</label><button type="button" id="replay" disabled>다시 듣기</button><button type="button" id="stopSpeech">읽기 중지</button><label>음성 <select id="voice" aria-label="읽기 음성"></select></label></div>
+<p id="status" role="status" aria-live="polite">준비되었습니다.</p>
+<p class="note">음성 입력 후 질문을 수정하고 전송할 수 있습니다. 음성 인식은 브라우저 제공 서비스로 처리되며 외부 서버로 음성이 전송될 수 있습니다. Chrome에서 localhost 또는 HTTPS로 접속하고 마이크 사용을 허용하세요. 한국어 읽기 음성은 PC·브라우저에 설치된 음성에 따라 달라집니다.</p>
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const sid = globalThis.crypto?.randomUUID?.() || ('session-' + Date.now() + '-' + Math.random().toString(36).slice(2));
+const synth = window.speechSynthesis;
+const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+let busy=false, recording=false, recognition=null, recognitionError=false, baseText='', finalText='', lastAnswer='';
+let speechGeneration=0, currentUtterance=null, voiceList=[];
+function status(text){$('status').textContent=text;}
+function controls(){
+  $('send').disabled=busy || recording;
+  $('mic').disabled=busy || !recognition;
+  $('mic').textContent=recording ? '인식 마치기' : '음성 입력';
+  $('q').readOnly=recording;
+  $('replay').disabled=!synth || !lastAnswer || busy || recording;
+}
+function add(name,text,cls){const p=document.createElement('div');p.className='msg '+cls;p.textContent=name+': '+text;$('messages').appendChild(p);$('messages').scrollTop=$('messages').scrollHeight;return p;}
+function stopSpeaking(){speechGeneration++;if(synth)synth.cancel();currentUtterance=null;}
+function loadVoices(){
+  if(!synth)return;
+  const previous=$('voice').value;
+  voiceList=synth.getVoices();
+  $('voice').replaceChildren();
+  const automatic=document.createElement('option');automatic.value='';automatic.textContent='한국어 자동 선택';$('voice').appendChild(automatic);
+  for(const v of voiceList){const o=document.createElement('option');o.value=v.voiceURI;o.textContent=v.name+' ('+v.lang+')';$('voice').appendChild(o);}
+  if(voiceList.some(v=>v.voiceURI===previous))$('voice').value=previous;
+}
+function speakAnswer(text){
+  if(!synth){status('이 브라우저는 음성 출력을 지원하지 않습니다.');return;}
+  stopSpeaking();
+  const generation=speechGeneration;
+  // Split long answers so a single long utterance does not stall playback.
+  const clean=text.replace(/```[\s\S]*?```/g,' 코드 내용은 화면에서 확인하세요. ').replace(/https?:\/\/\S+/g,' 링크 ').replace(/[*#`|]/g,' ');
+  const chunks=clean.match(/[^.!?。！？\n]{1,160}[.!?。！？\n]?/g) || [];
+  let index=0;
+  function next(){
+    if(generation!==speechGeneration)return;
+    if(index>=chunks.length){currentUtterance=null;status('답변 읽기를 마쳤습니다.');return;}
+    const u=new SpeechSynthesisUtterance(chunks[index++]);currentUtterance=u;
+    u.lang='ko-KR';u.rate=1;
+    const voice=voiceList.find(v=>v.voiceURI===$('voice').value) || voiceList.find(v=>/^ko(?:-|_)/i.test(v.lang));
+    if(voice){u.voice=voice;u.lang=voice.lang;}
+    u.onend=next;
+    u.onerror=e=>{if(generation===speechGeneration){currentUtterance=null;status('음성 재생 실패: '+e.error+'. 다시 듣기를 눌러주세요.');}};
+    synth.speak(u);
+  }
+  status('답변을 읽고 있습니다.');next();
+}
+async function sendQuestion(){
+  if(busy || recording)return;
+  const text=$('q').value.trim();if(!text)return;
+  if(text.length>3000){status('질문은 3,000자 이내로 입력하세요.');return;}
+  busy=true;controls();stopSpeaking();$('q').value='';
+  add('사용자',text,'me');const reply=add('AI','조회 중…','bot');status('주문·고객 데이터를 조회하고 있습니다.');
+  try{
+    const r=await fetch('/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:sid,message:text})});
+    const x=await r.json();
+    if(!r.ok)throw new Error(typeof x.detail==='string'?x.detail:JSON.stringify(x));
+    lastAnswer=typeof x.answer==='string'?x.answer:JSON.stringify(x.answer);
+    reply.textContent='AI: '+lastAnswer;status('답변이 도착했습니다.');
+    if($('autoSpeak').checked)speakAnswer(lastAnswer);
+  }catch(e){reply.textContent='AI 오류: '+e.message;status('요청이 실패했습니다. 질문을 확인하고 다시 전송하세요.');if(!$('q').value)$('q').value=text;}
+  finally{busy=false;controls();$('messages').scrollTop=$('messages').scrollHeight;}
+}
+$('f').addEventListener('submit',e=>{e.preventDefault();sendQuestion();});
+$('q').addEventListener('keydown',e=>{if(e.key==='Enter' && !e.shiftKey && !e.isComposing){e.preventDefault();$('f').requestSubmit();}});
+$('replay').onclick=()=>speakAnswer(lastAnswer);
+$('stopSpeech').onclick=()=>{stopSpeaking();status('답변 읽기를 중지했습니다.');};
+$('autoSpeak').onchange=()=>{if(!$('autoSpeak').checked)stopSpeaking();};
+if(synth){loadVoices();synth.addEventListener('voiceschanged',loadVoices);}else{$('autoSpeak').checked=false;$('autoSpeak').disabled=true;$('stopSpeech').disabled=true;$('voice').disabled=true;}
+if(Recognition && window.isSecureContext){
+  recognition=new Recognition();recognition.lang='ko-KR';recognition.continuous=false;recognition.interimResults=true;recognition.maxAlternatives=1;
+  recognition.onstart=()=>status('듣고 있습니다. 질문을 말씀하세요.');
+  recognition.onresult=e=>{
+    let interim='';
+    for(let i=e.resultIndex;i<e.results.length;i++){if(e.results[i].isFinal)finalText+=e.results[i][0].transcript+' ';else interim+=e.results[i][0].transcript;}
+    $('q').value=[baseText,finalText+interim].filter(Boolean).join(' ').trim();
+  };
+  recognition.onerror=e=>{
+    recognitionError=true;
+    const errors={'not-allowed':'마이크 권한이 거부되었습니다. 브라우저의 사이트 설정에서 마이크를 허용하세요.','service-not-allowed':'브라우저 음성 인식 서비스를 사용할 수 없습니다.','audio-capture':'마이크를 찾을 수 없습니다.','no-speech':'음성이 인식되지 않았습니다. 다시 시도하세요.','network':'음성 인식 서비스 연결에 실패했습니다. 인터넷 연결을 확인하세요.','language-not-supported':'한국어 음성 인식을 지원하지 않습니다.','aborted':'음성 인식을 취소했습니다.'};
+    status(errors[e.error] || '음성 인식 오류: '+e.error);
+  };
+  recognition.onend=()=>{
+    recording=false;controls();
+    if(recognitionError)return;
+    if(!finalText.trim()){status('확정된 음성이 없습니다. 다시 입력하거나 텍스트를 확인하세요.');return;}
+    status('음성 인식을 마쳤습니다. 질문을 확인하고 전송하세요.');
+    if($('autoSend').checked)sendQuestion();else $('q').focus();
+  };
+  $('mic').onclick=()=>{
+    if(recording){recognition.stop();return;}
+    stopSpeaking();baseText=$('q').value.trim();finalText='';recognitionError=false;recording=true;controls();
+    try{recognition.start();}catch(e){recording=false;controls();status('음성 인식을 시작할 수 없습니다: '+e.message);}
+  };
+}else{status(Recognition?'마이크를 사용하려면 localhost 또는 HTTPS로 접속하세요.':'이 브라우저는 음성 인식을 지원하지 않습니다. 텍스트 입력을 사용하세요.');}
+window.addEventListener('pagehide',()=>{if(recognition)recognition.abort();stopSpeaking();});
+controls();
+</script></body></html>
