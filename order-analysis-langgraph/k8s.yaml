@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: order-analysis-langgraph
+  name: order-analysis-langgraph 
 data:
   ORDERS_PARQUET_URI: "s3://warehouse/raw/stud12/**/*.parquet"
   S3_ENDPOINT: "https://aistor-server.aistor-server.svc.cluster.local:443"
