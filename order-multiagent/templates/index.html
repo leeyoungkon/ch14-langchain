@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LangGraph 멀티 에이전트 주문 분석</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.8/dist/chart.umd.min.js"></script>
+<style>
+:root{font-family:system-ui,-apple-system,sans-serif;color:#172337;background:#f6f8fb}body{margin:0 auto;max-width:1120px;padding:30px 18px}h1{font-size:24px}p{line-height:1.6}form{display:flex;gap:10px}input{flex:1;padding:14px;border:1px solid #bec8d6;border-radius:9px;font-size:15px}button{padding:13px 20px;border:0;background:#263b56;color:white;border-radius:9px;cursor:pointer}button:disabled{opacity:.6;cursor:wait}.panel{background:white;border:1px solid #e0e6ed;border-radius:13px;padding:22px;margin:20px 0;box-shadow:0 2px 8px #00000007}.answer{white-space:pre-wrap;line-height:1.7}#charts{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,460px),1fr));gap:16px}.chart-card{background:white;border:1px solid #e0e6ed;border-radius:12px;padding:15px;min-width:0}.chart-frame{height:300px;position:relative}small,.muted{color:#667386}.chips span{display:inline-block;background:#e8edf4;border-radius:15px;padding:5px 10px;margin-right:6px;margin-bottom:5px}.buttons button{background:#e8edf4;color:#263b56;margin:3px;padding:8px 12px}#error{color:#ab2020}#metrics{display:flex;gap:14px;flex-wrap:wrap}#metrics .metric{background:#f4f7fa;border-radius:10px;padding:12px;min-width:145px}strong{font-weight:650}
+</style></head><body>
+<h1>주문 분석 멀티 에이전트</h1>
+<p class="muted">Manager → 제품 판매 Agent / 고객 주문 Agent → 분석 보고서 및 차트</p>
+<div class="panel"><form id="queryForm"><input id="question" value="최근 7일 제품별 판매량과 고객별 주문 추이를 분석해줘" maxlength="1000" aria-label="분석 질문"><button id="go" type="submit">분석하기</button></form>
+<div class="buttons"><button type="button" data-q="최근 7일 제품별 판매 수량과 매출 추이를 보여줘">제품 분석</button><button type="button" data-q="최근 7일 고객별 주문금액 추이를 보여줘">고객 분석</button><button type="button" data-q="제품별 판매와 고객별 주문 추이를 모두 비교해줘">통합 분석</button></div><small>차트는 SQL 집계 기반입니다. CDN 접속이 차단되면 Chart.js를 로컬로 설치해야 합니다.</small></div>
+<div id="error" role="alert"></div>
+<div class="panel"><h2>Manager 분석 결과</h2><div id="trace" class="chips"></div><div id="metrics"></div><p id="answer" class="answer muted">질문을 입력하고 분석하기를 누르세요.</p></div>
+<div id="charts"></div>
+<script>
+const form=document.getElementById('queryForm'), btn=document.getElementById('go');
+const charts=[];
+document.querySelectorAll('[data-q]').forEach(el=>el.addEventListener('click',()=>{document.getElementById('question').value=el.dataset.q;form.requestSubmit();}));
+form.addEventListener('submit',async e=>{
+ e.preventDefault();btn.disabled=true;btn.textContent='분석 중…';document.getElementById('error').textContent='';
+ try{
+  const res=await fetch('/api/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:document.getElementById('question').value})});
+  if(!res.ok){const error=await res.json();throw new Error(error.detail||`HTTP ${res.status}`)}
+  const data=await res.json();
+  document.getElementById('answer').textContent=data.answer;
+  const trace=document.getElementById('trace'); trace.replaceChildren();
+  data.trace.forEach(s=>{const chip=document.createElement('span');chip.textContent=s;trace.appendChild(chip)});
+  const metrics=document.getElementById('metrics');metrics.replaceChildren();
+  Object.entries(data.metrics).forEach(([name,m])=>{
+   const box=document.createElement('div');box.className='metric';
+   const title=document.createElement('strong');title.textContent=name==='product'?'제품 분석':'고객 분석';
+   const txt=document.createElement('div');txt.textContent=`주문 ${m.orders.toLocaleString()}건 / 수량 ${m.quantity.toLocaleString()} / 금액 ${m.revenue.toLocaleString()}`;
+   const date=document.createElement('small');date.textContent=`최신 데이터: ${data.latest_data_date[name]} (최근 ${data.period_days}일)`;
+   box.append(title,txt,date);metrics.appendChild(box)
+  });
+  charts.forEach(c=>c.destroy());charts.length=0;
+  const root=document.getElementById('charts');root.replaceChildren();
+  data.charts.forEach(spec=>{
+   const card=document.createElement('div');card.className='chart-card';
+   const heading=document.createElement('h3');heading.textContent=spec.title;
+   const frame=document.createElement('div');frame.className='chart-frame';
+   const canvas=document.createElement('canvas');frame.appendChild(canvas);card.append(heading,frame);root.appendChild(card);
+   if(window.Chart){charts.push(new Chart(canvas,{type:'line',data:{labels:spec.labels,datasets:spec.datasets.map((d,i)=>({label:d.label,data:d.data,borderColor:['#244b7c','#bd6735','#237e74','#876bb3','#9e485d'][i%5],backgroundColor:'transparent',tension:.2}))},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{legend:{position:'bottom'}},scales:{y:{beginAtZero:true}}}}));}
+   else {const msg=document.createElement('p');msg.textContent='Chart.js 로딩 실패: 정적 파일을 로컬에서 제공하세요.';card.appendChild(msg)}
+  });
+ }catch(err){document.getElementById('error').textContent=err.message}
+ finally{btn.disabled=false;btn.textContent='분석하기'}
+});
+</script></body></html>
