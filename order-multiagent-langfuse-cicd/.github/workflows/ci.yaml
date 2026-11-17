@@ -1,0 +1,101 @@
+
+name: Order Multi-Agent CI/CD
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "**/*.py"
+      - "requirements.txt"
+      - "Dockerfile"
+      - "templates/**"
+      - ".github/workflows/ci.yaml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: order-multiagent-deploy
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Check Python syntax
+        run: python -m compileall -q .
+
+      - name: Run tests if present
+        shell: bash
+        run: |
+          if [ -d tests ]; then
+            python -m pytest tests/ -q
+          fi
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          tags: yklee2002/order-multiagent:${{ github.sha }}
+
+      - name: Update Kubernetes image tag
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          python - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          path = Path("k8s.yaml")
+          content = path.read_text(encoding="utf-8")
+          image = "yklee2002/order-multiagent:" + os.environ["IMAGE_TAG"]
+
+          pattern = r"(?m)^(\s*image:\s*)yklee2002/order-multiagent(?::[^\s]+)?\s*$"
+          updated, count = re.subn(
+              pattern,
+              lambda m: m.group(1) + image,
+              content
+          )
+
+          if count != 1:
+              raise RuntimeError("Expected exactly one image entry")
+
+          path.write_text(updated, encoding="utf-8")
+          PY
+
+      - name: Commit updated manifest
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add k8s.yaml
+          git commit -m "deploy: update order-multiagent image [skip ci]"
+          git push

@@ -1,0 +1,97 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: order-multiagent-config
+data:
+  ORDERS_PARQUET_URI: "s3://warehouse/raw/stud12/**/*.parquet"
+  S3_ENDPOINT: "https://aistor-server.aistor-server.svc.cluster.local:443"
+  S3_VERIFY_SSL: "false"
+  S3_REGION: "us-east-1"
+  S3_ACCESS_KEY: "admin"
+  S3_SECRET_KEY: "admin1234"
+  CUSTOMER_MCP_URL: "http://customer-mcp:8000/mcp"
+  OLLAMA_BASE_URL: "http://ollama.default.svc.cluster.local:11434"
+  CHAT_MODEL: "qwen3:8b"
+  OLLAMA_TIMEOUT: "180"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: langfuse-credentials
+type: Opaque
+stringData:
+  public-key: "pk-lf-e96d206f-a490-4f4e-895e-59f22a3e7604"
+  secret-key: "sk-lf-608e3048-2a7a-421e-aad0-ce18ddd86d7d"
+
+---  
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: order-multiagent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: order-multiagent
+  template:
+    metadata:
+      labels:
+        app: order-multiagent
+    spec:
+      containers:
+      - name: app
+        image: yklee2002/order-multiagent
+        imagePullPolicy: Always
+
+        ports:
+        - containerPort: 8000
+
+        envFrom:
+        - configMapRef:
+            name: order-multiagent-config
+
+        # LLMOps - Langfuse 연결
+        env:
+        - name: LANGFUSE_BASE_URL
+          value: "http://langfuse-web.llmops.svc.cluster.local:3000"
+
+        - name: LANGFUSE_PUBLIC_KEY
+          valueFrom:
+            secretKeyRef:
+              name: langfuse-credentials
+              key: public-key
+
+        - name: LANGFUSE_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: langfuse-credentials
+              key: secret-key
+
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 8
+          periodSeconds: 10
+
+        resources:
+          requests:
+            cpu: 250m
+            memory: 512Mi
+          limits:
+            cpu: "2"
+            memory: 2Gi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: order-multiagent
+spec:
+  type: ClusterIP
+  selector:
+    app: order-multiagent
+  ports:
+  - name: http
+    port: 8000
+    targetPort: 8000
